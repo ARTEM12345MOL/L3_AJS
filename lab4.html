@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ЛР4 — Event Loop и асинхронный JavaScript</title>
+    <style>
+        body { max-width: 50rem; margin: 2rem auto; padding: 0 1rem; font: 1rem/1.5 system-ui, sans-serif; }
+        button { font: inherit; padding: .45rem .8rem; }
+        pre { padding: .75rem; background: #f1f3f5; white-space: pre-wrap; overflow-wrap: anywhere; }
+        details { margin-block: .4rem; }
+        summary { cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>ЛР4 — Event Loop и асинхронный JavaScript</h1>
+    <section>
+        <h2>Порядок выполнения</h2>
+        <button id="run-loop" type="button">Показать Event Loop</button>
+        <ol id="loop-output" aria-live="polite"></ol>
+    </section>
+    <section>
+        <h2>Запросы к JSONPlaceholder</h2>
+        <button id="run-requests" type="button">Выполнить 8 запросов</button>
+        <p id="request-status" role="status"></p>
+        <div id="request-output"></div>
+    </section>
+    <script>
+        const api = 'https://jsonplaceholder.typicode.com';
+
+        function showEventLoop() {
+            const output = document.querySelector('#loop-output');
+            output.replaceChildren();
+
+            function log(message) {
+                const line = document.createElement('li');
+                line.textContent = message;
+                output.append(line);
+            }
+
+            log('Начало синхронного кода');
+            setTimeout(() => log('Задача таймера setTimeout'), 0);
+            Promise.resolve().then(() => log('Микрозадача Promise.then'));
+            queueMicrotask(() => log('Микрозадача queueMicrotask'));
+            log('Конец синхронного кода');
+        }
+
+        function sortPosts(posts) {
+            return [...posts].sort((a, b) => b.title.length - a.title.length);
+        }
+
+        function sortComments(comments) {
+            return [...comments].sort((a, b) => a.name.localeCompare(b.name, 'en'));
+        }
+
+        function selectUserFields(users) {
+            return users.map(({ id, name, username, email, phone }) => ({
+                id, name, username, email, phone,
+            }));
+        }
+
+        function selectIncompleteTodos(todos) {
+            return todos.filter((todo) => !todo.completed);
+        }
+
+        function requestWithCallback(path, transform, callback) {
+            const request = new XMLHttpRequest();
+            request.open('GET', api + path);
+            request.responseType = 'json';
+            request.timeout = 15000;
+            request.onload = () => {
+                if (request.status !== 200 || !Array.isArray(request.response)) {
+                    callback(new Error(`${path} — некорректный ответ, HTTP ${request.status}`));
+                    return;
+                }
+                callback(null, transform(request.response));
+            };
+            request.onerror = () => callback(new Error(`${path} — ошибка сети`));
+            request.ontimeout = () => callback(new Error(`${path} — истекло время ожидания`));
+            request.send();
+        }
+
+        function requestJson(path) {
+            return fetch(api + path, { signal: AbortSignal.timeout(15000) }).then((response) => {
+                if (!response.ok) throw new Error(`${path} — HTTP ${response.status}`);
+                return response.json();
+            });
+        }
+
+        function getPostsCallback(callback) {
+            requestWithCallback('/posts', sortPosts, callback);
+        }
+
+        function getCommentsCallback(callback) {
+            requestWithCallback('/comments', sortComments, callback);
+        }
+
+        function getUsersPromise() {
+            return requestJson('/users').then(selectUserFields);
+        }
+
+        function getTodosPromise() {
+            return requestJson('/todos').then(selectIncompleteTodos);
+        }
+
+        async function getPostsAsync() {
+            return sortPosts(await requestJson('/posts'));
+        }
+
+        async function getCommentsAsync() {
+            return sortComments(await requestJson('/comments'));
+        }
+
+        async function getUsersAsync() {
+            return selectUserFields(await requestJson('/users'));
+        }
+
+        async function getTodosAsync() {
+            return selectIncompleteTodos(await requestJson('/todos'));
+        }
+
+        function showRequests(event) {
+            const button = event.currentTarget;
+            const status = document.querySelector('#request-status');
+            const output = document.querySelector('#request-output');
+            output.replaceChildren();
+            button.disabled = true;
+            let remaining = 8;
+            status.textContent = 'Выполняются запросы…';
+
+            function resultHandler(label) {
+                const details = document.createElement('details');
+                const summary = document.createElement('summary');
+                const result = document.createElement('pre');
+                summary.textContent = label;
+                details.append(summary, result);
+                output.append(details);
+
+                return (error, items) => {
+                    summary.textContent = error ? `${label} — ошибка` : `${label} — ${items.length}`;
+                    result.textContent = error ? error.message : JSON.stringify(items, null, 2);
+                    remaining -= 1;
+                    if (remaining === 0) {
+                        button.disabled = false;
+                        status.textContent = 'Все запросы завершены.';
+                    }
+                };
+            }
+
+            function showPromise(label, promise) {
+                const show = resultHandler(label);
+                promise.then((items) => show(null, items), (error) => show(error));
+            }
+
+            getPostsCallback(resultHandler('Коллбэк /posts'));
+            getCommentsCallback(resultHandler('Коллбэк /comments'));
+            showPromise('Promise /users', getUsersPromise());
+            showPromise('Promise /todos', getTodosPromise());
+            showPromise('Async/await /posts', getPostsAsync());
+            showPromise('Async/await /comments', getCommentsAsync());
+            showPromise('Async/await /users', getUsersAsync());
+            showPromise('Async/await /todos', getTodosAsync());
+        }
+
+        document.querySelector('#run-loop').addEventListener('click', showEventLoop);
+        document.querySelector('#run-requests').addEventListener('click', showRequests);
+    </script>
+</body>
+</html>
